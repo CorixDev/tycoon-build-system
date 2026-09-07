@@ -1,30 +1,10 @@
---[[
-	BuildSystem (server) — grid building for a tycoon plot
-
-	What it does:
-	- Places items on the player's plot with server-side price and floor checks
-	- Multi-floor plots: floors unlock through the MaxFloor attribute,
-	  elevators rebuild themselves upward when a new floor is bought
-	- Structural integrity: items stand on a support graph (floor > walls/tables > surface items > ceiling).
-	  Remove a support and everything that depended on it collapses with a refund
-	- Save slots via DataStore with compact array serialization (see SerializeItem)
-
-	Note: the starter base layout for slot 1 is hardcoded at the bottom of the load handler.
-	In a bigger project that lives in a ModuleScript; kept in one file for the sample.
-
-	Author: Corix (Roblox: NekoPeonie)
-]]
-
---// Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 
---// Remotes
--- FindFirstChild-or-create fallbacks exist for studio testing.
--- In production these are created upfront, before any client can fire them.
+
 local BuildSystem = ReplicatedStorage:WaitForChild("BuildSystem")
 local PlaceItemEvent = BuildSystem:WaitForChild("PlaceItem")
 
@@ -45,13 +25,11 @@ AutoBuildElevator.Name = "AutoBuildElevator"
 
 local FurnitureFolder = BuildSystem:WaitForChild("Furniture")
 
---// Config
 local DATA_KEY = "PlayerBuilds_v6_Slots"
 local BuildStore = DataStoreService:GetDataStore(DATA_KEY)
 local FLOOR_HEIGHT = 12
 local REFUND_PERCENT = 0.8
 
--- Item categories change both placement rules and support behavior
 local SURFACE_ITEMS = { ["Monitor"] = true }
 local CEILING_ITEMS = { ["CeilingLamp"] = true, ["Chandelier"] = true }
 local IS_FLOOR = { ["WoodTile"] = true, ["AsphaltTile"] = true, ["CheckeredTile"] = true }
@@ -79,19 +57,16 @@ local ITEM_NAMES = {
 	"AsphaltTile", "CheckeredTile", "CheckeredWall"
 }
 
--- Numeric ids keep serialized entries small (DataStore limits)
 local ITEM_IDS = {}
 for i, v in ipairs(ITEM_NAMES) do
 	ITEM_IDS[v] = i
 end
 
---// Plot helpers
 local function GetPlayerPlot(player)
 	local plotName = player:GetAttribute("AssignedPlot")
 	return plotName and Workspace:FindFirstChild(plotName) or nil
 end
 
--- Plots can be a BasePart or a Model; we need one reference part to build relative CFrames from
 local function GetPlotGround(plot)
 	if not plot then return nil end
 	if plot:IsA("BasePart") then return plot end
@@ -118,7 +93,6 @@ local function GetItemHolder(plot)
 	return holder
 end
 
---// Shared break effect (used by manual removal and integrity collapses)
 local function PlayBreakEffect(worldCFrame, color)
 	local att = Instance.new("Attachment")
 	att.WorldCFrame = worldCFrame
@@ -139,9 +113,6 @@ local function PlayBreakEffect(worldCFrame, color)
 	Debris:AddItem(att, 1)
 end
 
---// Serialization
--- Compact save format: {id, x, y, z, rx, ry, rz, sx, sy, sz, refund}
--- rotation is only written when non-zero, size only when present — keeps entries short
 local function SerializeItem(PLOT, item, itemSize)
 	local itemName = item.Name
 	local itemCFrame = item:GetPivot()
@@ -171,8 +142,6 @@ local function SerializeItem(PLOT, item, itemSize)
 	return arr
 end
 
--- Supports both the compact array format and the verbose {Name, Pos, Rot} format
--- (the verbose one is what the starter layout below uses, for readability)
 local function DeserializeItem(PLOT, data)
 	local GROUND = GetPlotGround(PLOT)
 	local name, relCF, size, refund
@@ -195,7 +164,6 @@ local function DeserializeItem(PLOT, data)
 	return name, GROUND.CFrame:ToWorldSpace(relCF), size, refund
 end
 
---// Spawning
 local function SpawnItem(player, itemName, targetCFrame, customSize, cost, explicitRefund)
 	if itemName == "Cloud" then return nil end
 
@@ -229,7 +197,6 @@ local function SpawnItem(player, itemName, targetCFrame, customSize, cost, expli
 				part.CanCollide = true
 			end
 
-			-- Ceiling items hang visually but never block anything
 			if CEILING_ITEMS[itemName] then
 				part.CanCollide = false
 				if part.Name ~= "Hitbox" and part.Name ~= "TargetPart" then
@@ -239,7 +206,6 @@ local function SpawnItem(player, itemName, targetCFrame, customSize, cost, expli
 				end
 			end
 
-			-- Tag obstacles/doors so NPC pathfinding routes around them (or through doors)
 			if part.Name ~= "Hitbox" and part.Name ~= "TargetPart" then
 				local n = string.lower(itemName)
 				local isObstacle = string.find(n, "chair") or string.find(n, "table") or string.find(n, "desc") or string.find(n, "register") or string.find(n, "counter") or string.find(n, "stove") or string.find(n, "dispenser") or string.find(n, "monitor")
@@ -276,10 +242,6 @@ local function SpawnItem(player, itemName, targetCFrame, customSize, cost, expli
 	return newItem
 end
 
---// Structural integrity
--- BFS support check: items touching the ground are "supported", then support floods
--- through floors > walls/tables/elevators > ceiling and surface items.
--- Whatever stays unsupported after the flood collapses with a refund.
 local function EnforcePlotIntegrity(PLOT, player)
 	local ItemHolder = GetItemHolder(PLOT)
 	local GROUND = GetPlotGround(PLOT)
@@ -293,7 +255,6 @@ local function EnforcePlotIntegrity(PLOT, player)
 	local supported = {}
 	local queue = {}
 
-	-- Seed: anything sitting on the plot surface is supported
 	for _, item in pairs(ItemHolder:GetChildren()) do
 		local prim = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChild("Hitbox")) or item:FindFirstChildWhichIsA("BasePart")
 		if not prim then continue end
@@ -324,7 +285,6 @@ local function EnforcePlotIntegrity(PLOT, player)
 		local size = prim.Size
 		local name = curr.Name
 
-		-- Each item type "gives" support to specific neighbors in specific directions
 		local checkCFs = {}
 
 		if IS_FLOOR[name] then
@@ -373,7 +333,6 @@ local function EnforcePlotIntegrity(PLOT, player)
 		end
 	end
 
-	-- Collapse pass
 	local cashObj = player and player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash")
 
 	for _, item in ipairs(ItemHolder:GetChildren()) do
@@ -392,7 +351,6 @@ local function EnforcePlotIntegrity(PLOT, player)
 	end
 end
 
---// Placement (client asks, server re-checks everything)
 PlaceItemEvent.OnServerEvent:Connect(function(player, itemName, clientCFrame, rotation)
 	local PLOT = GetPlayerPlot(player)
 	local GROUND = GetPlotGround(PLOT)
@@ -400,13 +358,11 @@ PlaceItemEvent.OnServerEvent:Connect(function(player, itemName, clientCFrame, ro
 
 	local plotSurfaceY = GROUND.Position.Y + (GROUND.Size.Y / 2)
 
-	-- 0.01 epsilon keeps float noise from pushing an item into the wrong floor bucket
 	local floorIndex = math.floor(((clientCFrame.Y - plotSurfaceY) + 0.01) / FLOOR_HEIGHT)
 
 	local attemptFloor = floorIndex + 1
 	local maxFloor = player:GetAttribute("MaxFloor") or 1
 
-	-- One floor above current max is allowed, but only for floor tiles (you build the floor first)
 	if attemptFloor > maxFloor + 1 then return end
 	if attemptFloor == maxFloor + 1 and not IS_FLOOR[itemName] then return end
 
@@ -424,7 +380,6 @@ PlaceItemEvent.OnServerEvent:Connect(function(player, itemName, clientCFrame, ro
 
 	cashObj.Value -= price
 
-	-- Y is computed server-side from the floor index; client Y is only trusted for surface items
 	local fixedY = plotSurfaceY + (floorIndex * FLOOR_HEIGHT) + (size.Y / 2)
 
 	if SURFACE_ITEMS[itemName] then
@@ -444,7 +399,6 @@ PlaceItemEvent.OnServerEvent:Connect(function(player, itemName, clientCFrame, ro
 
 	SpawnItem(player, itemName, CFrame.new(clientCFrame.X, fixedY, clientCFrame.Z) * targetRot)
 
-	-- small delay lets the spawn settle before the support graph runs
 	task.delay(0.05, function()
 		if PLOT and player.Parent then
 			EnforcePlotIntegrity(PLOT, player)
@@ -477,8 +431,6 @@ RemoveItemEvent.OnServerEvent:Connect(function(player, targetItem)
 	end
 end)
 
---// Elevators
--- When a new floor is bought, every elevator on the previous top floor clones itself one level up
 FloorBought.Event:Connect(function(player, floorNum)
 	local PLOT = GetPlayerPlot(player)
 	local GROUND = GetPlotGround(PLOT)
@@ -517,7 +469,6 @@ FloorBought.Event:Connect(function(player, floorNum)
 	end
 end)
 
--- Called from the elevator UI: build a matching elevator on any reachable floor
 AutoBuildElevator.OnInvoke = function(player, sourceElevator, targetFloor)
 	local PLOT = GetPlayerPlot(player)
 	if not PLOT then return nil end
@@ -538,7 +489,6 @@ AutoBuildElevator.OnInvoke = function(player, sourceElevator, targetFloor)
 	return newItem
 end
 
---// Save slots
 local SaveSlotEvents = ReplicatedStorage:WaitForChild("SaveSlotEvents")
 local LoadSlotEvent = SaveSlotEvents:WaitForChild("LoadSlot")
 
@@ -548,7 +498,6 @@ LoadSlotEvent.OnServerEvent:Connect(function(player, slotId)
 	activeSlots[player.UserId] = slotId
 	player:SetAttribute("ActiveSlot", slotId)
 
-	-- plot assignment can lag behind the load request, wait for it
 	local plotName = player:GetAttribute("AssignedPlot")
 	while not plotName do
 		task.wait(0.5)
@@ -567,7 +516,6 @@ LoadSlotEvent.OnServerEvent:Connect(function(player, slotId)
 
 	ItemHolder:ClearAllChildren()
 
-	-- First ever load on this slot: give the player a starter base (free, refund 0)
 	if success and data == nil then
 		data = {
 			{ Name = "Stove", Pos = {19.5, 2.098, 34.5}, Rot = {-0, 3.141, 0} },
@@ -793,7 +741,6 @@ LoadSlotEvent.OnServerEvent:Connect(function(player, slotId)
 	end
 end)
 
---// Saving
 local isSavingPlot = {}
 
 local function SavePlot(player)
@@ -833,7 +780,6 @@ game:BindToClose(function()
 	task.wait(2)
 end)
 
--- Autosave every 30s, staggered per player so we don't spike the DataStore budget
 task.spawn(function()
 	while true do
 		task.wait(30)
