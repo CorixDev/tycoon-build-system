@@ -581,4 +581,50 @@ function NPCNav:NavigateTo(targetPos, watchObjectOrFn, isIdleWalk)
 	return self:WalkSmart(targetPos, watchObjectOrFn, isIdleWalk)
 end
 
+-- НОВЫЙ МЕТОД: Навигация с фоллбеком на безопасный телепорт
+function NPCNav:NavigateOrTeleport(targetPos, watchObjectOrFn, isIdleWalk)
+	if self._isForcedStop then return false end
+
+	-- Пробуем дойти пешком
+	if self:NavigateTo(targetPos, watchObjectOrFn, isIdleWalk) then 
+		return true 
+	end
+
+	-- Если объект/цель исчезла в процессе или изначально инвалидна
+	local isValidFunc = self:_ResolveValidator(watchObjectOrFn)
+	if isValidFunc and not isValidFunc() then return false end
+
+	local targetY = targetPos.Y
+	local lookVec = Vector3.new(0, 0, 1)
+
+	-- Умный парсинг конечной ориентации, если передали объект
+	if typeof(watchObjectOrFn) == "Instance" then
+		local tPart = watchObjectOrFn:FindFirstChild("TargetPart") or watchObjectOrFn:FindFirstChild("HumanoidRootPart")
+		if tPart then
+			targetY = tPart.Position.Y
+			lookVec = Vector3.new(tPart.CFrame.LookVector.X, 0, tPart.CFrame.LookVector.Z)
+		end
+	else
+		-- Если просто координаты - поворачиваем по направлению движения
+		lookVec = Vector3.new(targetPos.X - self.rootPart.Position.X, 0, targetPos.Z - self.rootPart.Position.Z)
+	end
+
+	lookVec = lookVec.Magnitude < 0.001 and Vector3.new(0, 0, 1) or lookVec.Unit
+
+	-- Выполняем телепорт с визуальными эффектами
+	self:HideWalkCloud()
+	self:PlayDespawnEffect()
+
+	local tY = self:GetTargetY(targetPos.X, targetPos.Z, targetY)
+	local spawnCFrame = CFrame.lookAt(
+		Vector3.new(targetPos.X, tY, targetPos.Z),
+		Vector3.new(targetPos.X, tY, targetPos.Z) + lookVec
+	)
+
+	self:PlaySpawnEffect(spawnCFrame)
+	task.wait(0.2)
+
+	return true
+end
+
 return NPCNav
