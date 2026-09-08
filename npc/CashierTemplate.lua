@@ -1,4 +1,3 @@
-local PhysicsService = game:GetService("PhysicsService")
 local ChatService = game:GetService("Chat")
 local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +11,8 @@ local npc = script.Parent
 local humanoid = npc:WaitForChild("Humanoid")
 local rootPart = npc:WaitForChild("HumanoidRootPart")
 local head = npc:WaitForChild("Head")
+
+CollectionService:AddTag(npc, "Cashier")
 
 local plotName = npc:GetAttribute("AssignedPlot")
 while not plotName do task.wait(0.5); plotName = npc:GetAttribute("AssignedPlot") end
@@ -34,7 +35,6 @@ local PATH_COSTS = {
 
 rootPart.Anchored = true; humanoid.PlatformStand = true
 if rootPart:CanSetNetworkOwnership() then pcall(function() rootPart:SetNetworkOwner(nil) end) end
-
 
 local partsToFade = {}
 local function SetupPartPhysics(part)
@@ -84,6 +84,26 @@ local function FindEmptyRegister()
 	return best
 end
 
+local function NavigateOrTeleport(targetPos, targetObj)
+	if nav:NavigateTo(targetPos, targetObj, false) then return true end
+	if not nav:IsValid(targetObj) then return false end
+
+	local targetPart = targetObj:FindFirstChild("TargetPart") or targetObj:FindFirstChild("HumanoidRootPart")
+	local targetY = targetPart and targetPart.Position.Y or targetPos.Y
+
+	nav:PlayDespawnEffect()
+	local tY = nav:GetTargetY(targetPos.X, targetPos.Z, targetY)
+
+	local lookVec = Vector3.new(0, 0, 1)
+	if targetObj:FindFirstChild("TargetPart") then
+		lookVec = Vector3.new(targetObj.TargetPart.CFrame.LookVector.X, 0, targetObj.TargetPart.CFrame.LookVector.Z)
+	end
+	lookVec = lookVec.Magnitude < 0.001 and Vector3.new(0, 0, 1) or lookVec.Unit
+
+	nav:PlaySpawnEffect(CFrame.lookAt(Vector3.new(targetPos.X, tY, targetPos.Z), Vector3.new(targetPos.X, tY, targetPos.Z) + lookVec))
+	task.wait(0.2)
+	return true
+end
 
 local function MainLoop()
 	task.wait(1)
@@ -96,22 +116,8 @@ local function MainLoop()
 		if myRegister then
 			local operatorVal = myRegister.Values.Operator
 			operatorVal.Value = npc
-			local arrived = nav:NavigateTo(myRegister.TargetPart.Position, myRegister)
 
-			if not arrived then
-				if nav:IsValid(myRegister) and myRegister:FindFirstChild("TargetPart") then
-					nav:PlayDespawnEffect()
-					local tY = nav:GetTargetY(myRegister.TargetPart.Position.X, myRegister.TargetPart.Position.Z, myRegister.TargetPart.Position.Y)
-					local flatLook = Vector3.new(myRegister.TargetPart.CFrame.LookVector.X, 0, myRegister.TargetPart.CFrame.LookVector.Z)
-					flatLook = flatLook.Magnitude < 0.001 and Vector3.new(0, 0, 1) or flatLook.Unit
-					nav:PlaySpawnEffect(CFrame.lookAt(
-						Vector3.new(myRegister.TargetPart.Position.X, tY, myRegister.TargetPart.Position.Z),
-						Vector3.new(myRegister.TargetPart.Position.X, tY, myRegister.TargetPart.Position.Z) + flatLook
-						))
-					arrived = true
-					task.wait(0.2)
-				end
-			end
+			local arrived = NavigateOrTeleport(myRegister.TargetPart.Position, myRegister)
 
 			if arrived and nav:IsValid(myRegister) then
 				local tPart = myRegister.TargetPart
