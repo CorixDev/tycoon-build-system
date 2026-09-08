@@ -1,11 +1,9 @@
-local PhysicsService = game:GetService("PhysicsService")
 local ChatService = game:GetService("Chat")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
 
 local Modules = ServerStorage:WaitForChild("Modules")
 local NPCNav = require(Modules:WaitForChild("NPCNavigation"))
@@ -149,7 +147,7 @@ local function GetDeliveryTarget()
 	for _, reg in ipairs(GetObjectsInPlot("CashRegister")) do
 		if reg:FindFirstChild("Values") and reg.Values:FindFirstChild("Operator") then
 			local operator = reg.Values.Operator.Value
-			if operator and operator.Parent and operator:IsDescendantOf(Workspace) and operator:FindFirstChild("HumanoidRootPart") then
+			if operator and operator.Parent and operator:FindFirstChild("HumanoidRootPart") then
 				local dist = (rootPart.Position - reg.TargetPart.Position).Magnitude
 				if dist < bestDist then
 					bestDist = dist
@@ -161,21 +159,42 @@ local function GetDeliveryTarget()
 	end
 
 	if not bestTarget then
-		for _, obj in ipairs(Workspace:GetChildren()) do
-			if obj ~= npc and obj:GetAttribute("AssignedPlot") == plotName and obj:FindFirstChild("HumanoidRootPart") then
-				if string.find(obj.Name, "Cashier") or obj.Name == "CashierTemplate" then
-					local dist = (rootPart.Position - obj.HumanoidRootPart.Position).Magnitude
-					if dist < bestDist then
-						bestDist = dist
-						bestTarget = obj
-						targetType = "IdleCashier"
-					end
+		for _, cashier in ipairs(CollectionService:GetTagged("Cashier")) do
+			if cashier ~= npc and cashier:GetAttribute("AssignedPlot") == plotName and cashier:FindFirstChild("HumanoidRootPart") then
+				local dist = (rootPart.Position - cashier.HumanoidRootPart.Position).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					bestTarget = cashier
+					targetType = "IdleCashier"
 				end
 			end
 		end
 	end
 
 	return bestTarget, targetType
+end
+
+local function NavigateOrTeleport(targetPos, targetObj, isOptional)
+	if nav:NavigateTo(targetPos, targetObj, isOptional) then
+		return true
+	end
+	if not IsValid(targetObj) then return false end
+
+	local targetY = targetPos.Y
+	if targetObj:FindFirstChild("TargetPart") then
+		targetY = targetObj.TargetPart.Position.Y
+	elseif targetObj:FindFirstChild("HumanoidRootPart") then
+		targetY = targetObj.HumanoidRootPart.Position.Y
+	end
+
+	nav:PlayDespawnEffect()
+	local tY = nav:GetTargetY(targetPos.X, targetPos.Z, targetY)
+	local flatLook = Vector3.new(targetPos.X - rootPart.Position.X, 0, targetPos.Z - rootPart.Position.Z)
+	if flatLook.Magnitude < 0.001 then flatLook = Vector3.new(0, 0, 1) else flatLook = flatLook.Unit end
+	nav:PlaySpawnEffect(CFrame.lookAt(Vector3.new(targetPos.X, tY, targetPos.Z), Vector3.new(targetPos.X, tY, targetPos.Z) + flatLook))
+	task.wait(0.2)
+
+	return IsValid(targetObj)
 end
 
 local function GetRandomAvailableWorkstation()
@@ -250,22 +269,9 @@ local function MainLoop()
 				IsWorking = true; myIdleStation = nil; myCurrentTaskObj = currentOrder.obj; myCurrentMachine = machine
 				local ticketID, orderType = currentOrder.id, currentOrder.type
 
-				if not nav:NavigateTo(machine.TargetPart.Position, machine, false) then
-					if IsValid(machine) and machine:FindFirstChild("TargetPart") then
-						local targetPos = machine.TargetPart.Position
-						local targetY = machine.TargetPart.Position.Y
-
-						nav:PlayDespawnEffect()
-
-						local tY = nav:GetTargetY(targetPos.X, targetPos.Z, targetY)
-						local flatLook = Vector3.new(targetPos.X - rootPart.Position.X, 0, targetPos.Z - rootPart.Position.Z)
-						if flatLook.Magnitude < 0.001 then flatLook = Vector3.new(0, 0, 1) else flatLook = flatLook.Unit end
-						nav:PlaySpawnEffect(CFrame.lookAt(Vector3.new(targetPos.X, tY, targetPos.Z), Vector3.new(targetPos.X, tY, targetPos.Z) + flatLook))
-						task.wait(0.2)
-					else
-						if IsValid(machine) then machine:SetAttribute("Occupied", false) end
-						currentOrder.obj.Parent = ActiveOrders; IsWorking = false; myCurrentTaskObj = nil; myCurrentMachine = nil; continue
-					end
+				if not NavigateOrTeleport(machine.TargetPart.Position, machine, false) then
+					if IsValid(machine) then machine:SetAttribute("Occupied", false) end
+					currentOrder.obj.Parent = ActiveOrders; IsWorking = false; myCurrentTaskObj = nil; myCurrentMachine = nil; continue
 				end
 
 				if not IsValid(machine) or not machine:FindFirstChild("TargetPart") then
@@ -309,24 +315,7 @@ local function MainLoop()
 				end
 
 				if dropPos and targetObj then
-					if not nav:NavigateTo(dropPos, targetObj, false) then
-						if IsValid(targetObj) then
-							local targetY = dropPos.Y
-							if targetObj:FindFirstChild("TargetPart") then
-								targetY = targetObj.TargetPart.Position.Y
-							elseif targetObj:FindFirstChild("HumanoidRootPart") then
-								targetY = targetObj.HumanoidRootPart.Position.Y
-							end
-
-							nav:PlayDespawnEffect()
-
-							local tY = nav:GetTargetY(dropPos.X, dropPos.Z, targetY)
-							local faceL = Vector3.new(dropPos.X - rootPart.Position.X, 0, dropPos.Z - rootPart.Position.Z)
-							if faceL.Magnitude < 0.001 then faceL = Vector3.new(0, 0, 1) else faceL = faceL.Unit end
-							nav:PlaySpawnEffect(CFrame.lookAt(Vector3.new(dropPos.X, tY, dropPos.Z), Vector3.new(dropPos.X, tY, dropPos.Z) + faceL))
-							task.wait(0.2)
-						end
-					end
+					NavigateOrTeleport(dropPos, targetObj, false)
 
 					if IsValid(targetObj) then
 						if targetType then
@@ -334,8 +323,9 @@ local function MainLoop()
 							if faceDir.Magnitude > 0.001 then rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + faceDir.Unit) end
 
 							Speak("Here is your order!")
-							if targetObj:FindFirstChild("Head") then
-								pcall(function() ChatService:Chat(targetObj.Head, "Got it!", Enum.ChatColor.Green) end)
+							local speakEvent = targetObj:FindFirstChild("SpeakRequested")
+							if speakEvent then
+								speakEvent:Fire("Got it!", Enum.ChatColor.Green)
 							end
 							task.wait(0.5)
 						else
